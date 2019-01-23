@@ -23,6 +23,7 @@
 package io.crate.execution.engine.sort;
 
 import io.crate.data.BatchIterator;
+import io.crate.data.Bucket;
 import io.crate.data.CollectingBatchIterator;
 import io.crate.data.Input;
 import io.crate.data.Projector;
@@ -31,10 +32,13 @@ import io.crate.execution.engine.collect.CollectExpression;
 
 import java.util.Collection;
 import java.util.Comparator;
+import java.util.stream.Collector;
 
 public class SortingTopNProjector implements Projector {
 
-    private final SortingTopNCollector collector;
+    private final int NUMBER_OF_ROWS_IN_BOUNDED_QUEUE_THRESHOLD = 10_000;
+
+    private final Collector<Row, ?, Bucket> collector;
 
     /**
      * @param inputs             contains output {@link Input}s and orderBy {@link Input}s
@@ -50,14 +54,34 @@ public class SortingTopNProjector implements Projector {
                                 Comparator<Object[]> ordering,
                                 int limit,
                                 int offset) {
-        collector = new SortingTopNCollector(
-            inputs,
-            collectExpressions,
-            numOutputs,
-            ordering,
-            limit,
-            offset
-        );
+        /**
+         * We'll use an unbounded queue with the initial capacity of {@link NUMBER_OF_ROWS_IN_BOUNDED_QUEUE_THRESHOLD}
+         * if the maximum number of rows we have to accommodate in the queue in order to maintain correctness is
+         * greater than this threshold.
+         *
+         * Otherwise, we'll use a bounded queue.
+         */
+        if ((limit + offset) > NUMBER_OF_ROWS_IN_BOUNDED_QUEUE_THRESHOLD) {
+            collector = new UnboundedSortingTopNCollector(
+                inputs,
+                collectExpressions,
+                numOutputs,
+                ordering,
+                NUMBER_OF_ROWS_IN_BOUNDED_QUEUE_THRESHOLD,
+                limit,
+                offset
+            );
+        } else {
+            collector = new BoundedSortingTopNCollector(
+                inputs,
+                collectExpressions,
+                numOutputs,
+                ordering,
+                limit,
+                offset
+            );
+        }
+
     }
 
     @Override
